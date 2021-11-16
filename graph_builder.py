@@ -3,15 +3,17 @@
 # import gevent
 # from gevent.pool import Pool
 
-from typing import List
+from typing import List, Iterable
 import asyncio
 import logging
-import traceback
+from async_dns.core import types
+from async_dns.resolver import ProxyResolver
+import networkx as nx
+import matplotlib.pyplot as plt
 from neo3.network.node import NeoNode
 from neo3.network.message import Message, MessageType
 from neo3.network import payloads
 from neo3 import settings
-from graph import GraphBuilder
 logger = logging.getLogger()
 
 
@@ -49,9 +51,49 @@ settings.network.standby_committee = [
 settings.network.validators_count = 7
 
 loop = asyncio.get_event_loop()
+# pool = Pool(10000)
+failed_to_connect_to_nodes = set()
 
 
-async def get_addr(host: str, port: int) -> List[str]:
+class GraphBuilder:
+    def __init__(self):
+        self.graph = nx.Graph()
+    
+    def new_node_with_neighbours(self, node_ip: str, neighbour_ips: Iterable[str]):
+        if node_ip not in self.graph:
+            self.graph.add_node(node_ip)
+        for neighbour_ip in neighbour_ips:
+            self.graph.add_edge(node_ip, neighbour_ip)
+    
+    def draw_graph(self, with_node_name=False):
+        graph = self.graph
+        print(f'{graph.number_of_nodes()} nodes:')
+        print(graph.nodes.data())
+        print(f'{graph.number_of_edges()} edges:')
+        print(graph.edges.data())
+
+        d = dict(graph.degree)
+        
+        pos = nx.spring_layout(graph, seed=68)
+        fig = plt.figure()
+        timer = fig.canvas.new_timer(interval=10000)
+        timer.add_callback(plt.close)
+        nx.draw(graph, pos, with_labels=with_node_name, node_color="skyblue", node_shape="o", linewidths=2,
+                font_size=10, font_color="red", edge_color="grey",
+                nodelist=d.keys(), node_size=[(v+15) * 5 for v in d.values()])
+        plt.savefig('nodes.eps', bbox_inches='tight')
+        timer.start()
+        plt.show()
+
+
+g = GraphBuilder()
+
+
+async def get_addr(host_and_port: str) -> List[str]:
+    host, port = host_and_port.split(':')
+    port = int(port)
+    if port == 0:
+        return []
     connected = False
     node = None
     try:
@@ -67,29 +109,49 @@ async def get_addr(host: str, port: int) -> List[str]:
                 await node.disconnect(payloads.DisconnectReason.MAX_CONNECTIONS_REACHED)
                 return [address.address for address in message.payload.addresses]
     except:
-        print(f'Failed to connect to {host}:{port}')
+        # print(f'Failed to connect to {host}:{port}')
+        failed_to_connect_to_nodes.add(host_and_port)
         # logger.info(traceback.format_exc())
         if connected:
             await node.disconnect(payloads.DisconnectReason.MAX_CONNECTIONS_REACHED)
         return []
 
 
-g = GraphBuilder()
-# pool = Pool(10000)
-
-
-async def build_topology(initial_address: str = 'seed1t4.neo.org', initial_port: int = 20333):
-    addresses = await get_addr(initial_address, initial_port)
-    g.new_node_with_neighbours(f'{initial_address}:{initial_port}', addresses)
+async def build_topology(initial_ip_port):
+    addresses = await get_addr(initial_ip_port)
     for address in addresses:
-        ip, port = address.split(':')
-        port = int(port)
-        if port == 0:
+        if address in g.graph or address.endswith(':0'):
             continue
         # print(address)
-        asyncio.ensure_future(build_topology(ip, port))
+        asyncio.ensure_future(build_topology(address), loop=loop)
+    g.new_node_with_neighbours(f'{initial_ip_port}', addresses)
 
-asyncio.ensure_future(build_topology())
+
+async def dns_resolve(host: str):
+    """
+    :param host: seed1t4.neo.org:20333 ; seed1t4.neo.org
+    :return: ip_address:20333 ; ip_address
+    """
+    host_port_list = host.split(':')
+    host = host_port_list[0]
+    resolver = ProxyResolver()
+    res, cached = await resolver.query(host, types.A)
+    host_port_list[0] = res.an[0].data.data
+    return ':'.join(host_port_list)
+
+
+async def dns_resolve_many(hosts: List[str]):
+    tasks, _ = await asyncio.wait([dns_resolve(host) for host in hosts])
+    return [await task for task in tasks]
+
+
+seed_hosts = settings.network.seedlist
+seed_ip_hosts = loop.run_until_complete(dns_resolve_many(seed_hosts))
+
+for ip_host in seed_ip_hosts:
+    asyncio.ensure_future(build_topology(ip_host))
 loop.run_until_complete(asyncio.sleep(60))
 loop.stop()
+print(f'Failed to connect to {len(failed_to_connect_to_nodes)} nodes:')
+print(failed_to_connect_to_nodes)
 g.draw_graph()

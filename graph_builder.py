@@ -53,7 +53,7 @@ settings.network.validators_count = 7
 loop = asyncio.get_event_loop()
 # pool = Pool(10000)
 failed_to_connect_to_nodes = set()
-
+visited_nodes = set()
 
 class GraphBuilder:
     def __init__(self):
@@ -80,7 +80,7 @@ class GraphBuilder:
         timer.add_callback(plt.close)
         nx.draw(graph, pos, with_labels=with_node_name, node_color="skyblue", node_shape="o", linewidths=2,
                 font_size=10, font_color="red", edge_color="grey",
-                nodelist=d.keys(), node_size=[(v+15) * 5 for v in d.values()])
+                nodelist=d.keys(), node_size=[(v+5) * 5 for v in d.values()])
         plt.savefig('nodes.eps', bbox_inches='tight')
         timer.start()
         plt.show()
@@ -117,14 +117,22 @@ async def get_addr(host_and_port: str) -> List[str]:
         return []
 
 
-async def build_topology(initial_ip_port):
+async def build_topology(initial_ip_port: str):
     addresses = await get_addr(initial_ip_port)
+    tasks = []
     for address in addresses:
-        if address.endswith(':0'):
+        if address.endswith(':0') or address in visited_nodes:
             continue
         # print(address)
-        asyncio.ensure_future(build_topology(address), loop=loop)
+        tasks.append(asyncio.ensure_future(build_topology(address), loop=loop))
+        visited_nodes.add(address)
     g.new_node_with_neighbours(f'{initial_ip_port}', addresses)
+    if tasks:
+        await asyncio.wait(tasks)
+
+
+async def build_topology_from_many(initial_ip_ports: List[str]):
+    await asyncio.wait([asyncio.ensure_future(build_topology(address), loop=loop) for address in initial_ip_ports])
 
 
 async def dns_resolve(host: str):
@@ -147,11 +155,9 @@ async def dns_resolve_many(hosts: List[str]):
 
 seed_hosts = settings.network.seedlist
 seed_ip_hosts = loop.run_until_complete(dns_resolve_many(seed_hosts))
-
-for ip_host in seed_ip_hosts:
-    asyncio.ensure_future(build_topology(ip_host))
-loop.run_until_complete(asyncio.sleep(60))
-loop.stop()
+loop.run_until_complete(build_topology_from_many(seed_ip_hosts))
+# loop.run_until_complete(asyncio.sleep(60))
+# loop.stop()
 print(f'Failed to connect to {len(failed_to_connect_to_nodes)} nodes:')
 print(failed_to_connect_to_nodes)
 g.draw_graph()

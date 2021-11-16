@@ -133,7 +133,8 @@ async def build_topology(initial_ip_port: str):
         # print(address)
         tasks.append(asyncio.ensure_future(build_topology(address), loop=loop))
         visited_nodes.add(address)
-    graph_builder.new_node_with_neighbours(f'{initial_ip_port}', addresses)
+    graph_builder.new_node_with_neighbours(
+        initial_ip_port.split(":")[0], [address.split(':')[0] for address in addresses])
     if tasks:
         await asyncio.wait(tasks)
 
@@ -159,7 +160,8 @@ async def dns_resolve_many(hosts: List[str]):
 async def build_topology_from_many(initial_host_ports: List[str]):
     initial_ip_ports = await dns_resolve_many(initial_host_ports)
     for ip_port, host_port in zip(initial_ip_ports, initial_host_ports):
-        graph_builder.graph.add_node(ip_port, host=host_port)
+        ip, _ = ip_port.split(':')
+        graph_builder.graph.add_node(ip, host=host_port)
     await asyncio.wait([asyncio.ensure_future(build_topology(address), loop=loop) for address in initial_ip_ports])
 
 

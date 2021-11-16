@@ -65,14 +65,14 @@ class GraphBuilder:
             self.graph.add_node(neighbour_ip)
             self.graph.add_edge(node_ip, neighbour_ip)
     
-    def draw_graph(self, with_node_name=False, use_timer=True):
+    def draw_graph(self, show_plot=False, with_node_name=True):
         graph = self.graph
         print(f'{graph.number_of_nodes()} nodes:')
         print(graph.nodes.data())
         print(f'{graph.number_of_edges()} edges:')
         print(graph.edges.data())
 
-        if use_timer:
+        if show_plot:
             d = dict(graph.degree)
             color_map = []
             for node in graph.nodes:
@@ -85,8 +85,8 @@ class GraphBuilder:
             fig = plt.figure()
             timer = fig.canvas.new_timer(interval=10000)
             timer.add_callback(plt.close)
-            nx.draw(graph, pos, with_labels=with_node_name, node_color=color_map, node_shape="o", linewidths=2,
-                    font_size=8, font_color="black", edge_color="grey",
+            nx.draw(graph, pos, with_labels=with_node_name, node_color=color_map, node_shape="o", linewidths=1,
+                    font_size=2, font_color="black", edge_color="grey",
                     nodelist=d.keys(), node_size=[(v+5) * 5 for v in d.values()])
             plt.savefig('nodes.eps', bbox_inches='tight')
             timer.start()
@@ -168,4 +168,4 @@ loop.run_until_complete(build_topology_from_many(settings.network.seedlist))
 # loop.stop()
 print(f'Failed to connect to {len(failed_to_connect_to_nodes)} nodes:')
 print(failed_to_connect_to_nodes)
-graph_builder.draw_graph(False, True)
+graph_builder.draw_graph(show_plot=False)

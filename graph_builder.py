@@ -73,12 +73,18 @@ class GraphBuilder:
         print(graph.edges.data())
 
         d = dict(graph.degree)
+        color_map = []
+        for node in graph.nodes:
+            if 'host' in graph.nodes._nodes[node]:
+                color_map.append('red')
+            else:
+                color_map.append('skyblue')
         
         pos = nx.spring_layout(graph, seed=68)
         fig = plt.figure()
         timer = fig.canvas.new_timer(interval=10000)
         timer.add_callback(plt.close)
-        nx.draw(graph, pos, with_labels=with_node_name, node_color="skyblue", node_shape="o", linewidths=2,
+        nx.draw(graph, pos, with_labels=with_node_name, node_color=color_map, node_shape="o", linewidths=2,
                 font_size=10, font_color="red", edge_color="grey",
                 nodelist=d.keys(), node_size=[(v+5) * 5 for v in d.values()])
         plt.savefig('nodes.eps', bbox_inches='tight')
@@ -86,7 +92,7 @@ class GraphBuilder:
         plt.show()
 
 
-g = GraphBuilder()
+graph_builder = GraphBuilder()
 
 
 async def get_addr(host_and_port: str) -> List[str]:
@@ -126,13 +132,9 @@ async def build_topology(initial_ip_port: str):
         # print(address)
         tasks.append(asyncio.ensure_future(build_topology(address), loop=loop))
         visited_nodes.add(address)
-    g.new_node_with_neighbours(f'{initial_ip_port}', addresses)
+    graph_builder.new_node_with_neighbours(f'{initial_ip_port}', addresses)
     if tasks:
         await asyncio.wait(tasks)
-
-
-async def build_topology_from_many(initial_ip_ports: List[str]):
-    await asyncio.wait([asyncio.ensure_future(build_topology(address), loop=loop) for address in initial_ip_ports])
 
 
 async def dns_resolve(host: str):
@@ -153,11 +155,16 @@ async def dns_resolve_many(hosts: List[str]):
     return [await task for task in tasks]
 
 
-seed_hosts = settings.network.seedlist
-seed_ip_hosts = loop.run_until_complete(dns_resolve_many(seed_hosts))
-loop.run_until_complete(build_topology_from_many(seed_ip_hosts))
+async def build_topology_from_many(initial_host_ports: List[str]):
+    initial_ip_ports = await dns_resolve_many(initial_host_ports)
+    for ip_port, host_port in zip(initial_ip_ports, initial_host_ports):
+        graph_builder.graph.add_node(ip_port, host=host_port)
+    await asyncio.wait([asyncio.ensure_future(build_topology(address), loop=loop) for address in initial_ip_ports])
+
+
+loop.run_until_complete(build_topology_from_many(settings.network.seedlist))
 # loop.run_until_complete(asyncio.sleep(60))
 # loop.stop()
+graph_builder.draw_graph(False)
 print(f'Failed to connect to {len(failed_to_connect_to_nodes)} nodes:')
 print(failed_to_connect_to_nodes)
-g.draw_graph()

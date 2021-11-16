@@ -1,0 +1,22 @@
+name: node graph
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "8 14 * * *" #runs at 08:14 UTC everyday
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: setup python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+      - name: checkout repo content
+        uses: actions/checkout@v2
+      - name: pip
+        run: pip install -r requirements.txt
+      - name: execute
+        run: python graph_builder.py

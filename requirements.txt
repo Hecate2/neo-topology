@@ -1,0 +1,4 @@
+networkx==2.6.3
+neo_mamba==0.9
+matplotlib==3.4.3
+async_dns==2.0.0

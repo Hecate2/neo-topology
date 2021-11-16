@@ -65,31 +65,32 @@ class GraphBuilder:
             self.graph.add_node(neighbour_ip)
             self.graph.add_edge(node_ip, neighbour_ip)
     
-    def draw_graph(self, with_node_name=False):
+    def draw_graph(self, with_node_name=False, use_timer=True):
         graph = self.graph
         print(f'{graph.number_of_nodes()} nodes:')
         print(graph.nodes.data())
         print(f'{graph.number_of_edges()} edges:')
         print(graph.edges.data())
 
-        d = dict(graph.degree)
-        color_map = []
-        for node in graph.nodes:
-            if 'host' in graph.nodes._nodes[node]:
-                color_map.append('red')
-            else:
-                color_map.append('skyblue')
-        
-        pos = nx.spring_layout(graph, seed=68)
-        fig = plt.figure()
-        timer = fig.canvas.new_timer(interval=10000)
-        timer.add_callback(plt.close)
-        nx.draw(graph, pos, with_labels=with_node_name, node_color=color_map, node_shape="o", linewidths=2,
-                font_size=10, font_color="red", edge_color="grey",
-                nodelist=d.keys(), node_size=[(v+5) * 5 for v in d.values()])
-        plt.savefig('nodes.eps', bbox_inches='tight')
-        timer.start()
-        plt.show()
+        if use_timer:
+            d = dict(graph.degree)
+            color_map = []
+            for node in graph.nodes:
+                if 'host' in graph.nodes._nodes[node]:
+                    color_map.append('red')
+                else:
+                    color_map.append('skyblue')
+            
+            pos = nx.spring_layout(graph, seed=68)
+            fig = plt.figure()
+            timer = fig.canvas.new_timer(interval=10000)
+            timer.add_callback(plt.close)
+            nx.draw(graph, pos, with_labels=with_node_name, node_color=color_map, node_shape="o", linewidths=2,
+                    font_size=8, font_color="black", edge_color="grey",
+                    nodelist=d.keys(), node_size=[(v+5) * 5 for v in d.values()])
+            plt.savefig('nodes.eps', bbox_inches='tight')
+            timer.start()
+            plt.show()
 
 
 graph_builder = GraphBuilder()
@@ -165,6 +166,6 @@ async def build_topology_from_many(initial_host_ports: List[str]):
 loop.run_until_complete(build_topology_from_many(settings.network.seedlist))
 # loop.run_until_complete(asyncio.sleep(60))
 # loop.stop()
-graph_builder.draw_graph(False)
 print(f'Failed to connect to {len(failed_to_connect_to_nodes)} nodes:')
 print(failed_to_connect_to_nodes)
+graph_builder.draw_graph(False, True)

@@ -60,9 +60,9 @@ class GraphBuilder:
         self.graph = nx.Graph()
     
     def new_node_with_neighbours(self, node_ip: str, neighbour_ips: Iterable[str]):
-        if node_ip not in self.graph:
-            self.graph.add_node(node_ip)
+        self.graph.add_node(node_ip)
         for neighbour_ip in neighbour_ips:
+            self.graph.add_node(neighbour_ip)
             self.graph.add_edge(node_ip, neighbour_ip)
     
     def draw_graph(self, with_node_name=False):
@@ -120,7 +120,7 @@ async def get_addr(host_and_port: str) -> List[str]:
 async def build_topology(initial_ip_port):
     addresses = await get_addr(initial_ip_port)
     for address in addresses:
-        if address in g.graph or address.endswith(':0'):
+        if address.endswith(':0'):
             continue
         # print(address)
         asyncio.ensure_future(build_topology(address), loop=loop)

@@ -63,7 +63,7 @@ ip_location_dict = defaultdict(set)
 client = httpx.AsyncClient()
 
 
-httpx_usual_exceptions = (httpx.HTTPError, httpx.TimeoutException, httpx.HTTPStatusError)
+httpx_usual_exceptions = (httpx.HTTPError, httpx.TimeoutException)
 retry_lock = asyncio.Lock()
 
 
@@ -230,7 +230,7 @@ async def dns_resolve(host: str):
     """
     host_port_list = host.split(':')
     host = host_port_list[0]
-    resolver = ProxyResolver()
+    resolver = ProxyResolver(query_timeout=10)
     res, cached = await resolver.query(host, types.A)
     host_port_list[0] = res.an[0].data.data
     return ':'.join(host_port_list)

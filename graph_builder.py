@@ -4,11 +4,15 @@
 # from gevent.pool import Pool
 
 from typing import List, Iterable
+from collections import defaultdict
 import asyncio
 import logging
+from functools import wraps
+from urllib.parse import urlparse
 from async_dns.core import types
 from async_dns.resolver import ProxyResolver
 import networkx as nx
+import httpx
 import matplotlib.pyplot as plt
 from neo3.network.node import NeoNode
 from neo3.network.message import Message, MessageType
@@ -54,6 +58,83 @@ loop = asyncio.get_event_loop()
 # pool = Pool(10000)
 failed_to_connect_to_nodes = set()
 visited_nodes = set()
+ip_location_dict = defaultdict(set)
+
+client = httpx.AsyncClient()
+
+
+httpx_usual_exceptions = (httpx.HTTPError, httpx.TimeoutException, httpx.HTTPStatusError)
+retry_lock = asyncio.Lock()
+
+
+def async_retry(*exceptions, retries=5, cooldown=0):
+    def wrap(func):
+        @wraps(func)
+        async def inner(*args, **kwargs):
+            retries_count = retries
+            while True:
+                try:
+                    result = await func(*args, **kwargs)
+                except exceptions as err:
+                    retries_count -= 1
+                    if retries_count == 0:
+                        # print(f'Too many retries')
+                        raise err
+                    else:
+                        # print(f'Retry with remaining count {retries_count} before {cooldown} sec of cooldown')
+                        time_before_acquire = loop.time()
+                        await retry_lock.acquire()
+                        time_after_acquire = loop.time()
+                        await asyncio.sleep(max(cooldown - (time_after_acquire - time_before_acquire), 0))
+                        retry_lock.release()
+                else:
+                    return result
+        return inner
+    return wrap
+
+
+class Limiter:
+    # domain -> req/sec:
+    _limits = {
+        'ip-api.com': 100,
+    }
+    # domain -> it's lock:
+    _locks = defaultdict(asyncio.Lock)
+    # domain -> it's last request time
+    _times = defaultdict(lambda: 0)
+
+    def __init__(self, url):
+        self._host = urlparse(url).hostname
+
+    async def __aenter__(self):
+        await self._lock.acquire()
+        to_wait = self._to_wait_before_request()
+        # print(f'Wait {to_wait} sec before next request to {self._host}')
+        await asyncio.sleep(to_wait)
+
+    async def __aexit__(self, *args):
+        # print(f'Request to {self._host} just finished')
+        self._update_request_time()
+        self._lock.release()
+
+    @property
+    def _lock(self):
+        """Lock that prevents multiple requests to same host."""
+        return self._locks[self._host]
+
+    def _to_wait_before_request(self):
+        """What time we need to wait before request to host."""
+        request_time = self._times[self._host]
+        request_delay = 1 / self._limits[self._host]
+        now = asyncio.get_event_loop().time()
+        to_wait = request_time + request_delay - now
+        to_wait = max(0, to_wait)
+        return to_wait
+
+    def _update_request_time(self):
+        now = loop.time()
+        self._times[self._host] = now
+
 
 class GraphBuilder:
     def __init__(self):
@@ -98,6 +179,7 @@ graph_builder = GraphBuilder()
 
 async def get_addr(host_and_port: str) -> List[str]:
     host, port = host_and_port.split(':')
+    get_ip_location_task = asyncio.create_task(get_ip_location(host))
     port = int(port)
     if port == 0:
         return []
@@ -114,6 +196,7 @@ async def get_addr(host_and_port: str) -> List[str]:
             message = await node.read_message(timeout=5)
             if message.type == MessageType.ADDR:
                 await node.disconnect(payloads.DisconnectReason.MAX_CONNECTIONS_REACHED)
+                await get_ip_location_task
                 return [address.address for address in message.payload.addresses]
     except:
         # print(f'Failed to connect to {host}:{port}')
@@ -121,6 +204,7 @@ async def get_addr(host_and_port: str) -> List[str]:
         # logger.info(traceback.format_exc())
         if connected:
             await node.disconnect(payloads.DisconnectReason.MAX_CONNECTIONS_REACHED)
+        await get_ip_location_task
         return []
 
 
@@ -163,6 +247,22 @@ async def build_topology_from_many(initial_host_ports: List[str]):
         ip, _ = ip_port.split(':')
         graph_builder.graph.add_node(ip, host=host_port)
     await asyncio.wait([asyncio.ensure_future(build_topology(address), loop=loop) for address in initial_ip_ports])
+    await client.aclose()
+
+
+@async_retry(*httpx_usual_exceptions, retries=-1, cooldown=60)
+async def get_ip_location(ip: str):
+    url = f'http://ip-api.com/json/{ip}'
+    async with Limiter(url):
+        r = await client.get(url)
+    if r.status_code >= 400:
+        r.raise_for_status()
+    try:
+        r_dict = r.json()
+        key = f'{r_dict["country"]} {r_dict["city"]}'
+        ip_location_dict[key].add(ip)
+    except:
+        pass
 
 
 loop.run_until_complete(build_topology_from_many(settings.network.seedlist))
@@ -170,4 +270,6 @@ loop.run_until_complete(build_topology_from_many(settings.network.seedlist))
 # loop.stop()
 print(f'Failed to connect to {len(failed_to_connect_to_nodes)} nodes:')
 print(failed_to_connect_to_nodes)
+print('ip_location_dict:')
+print(ip_location_dict)
 graph_builder.draw_graph(show_plot=False)

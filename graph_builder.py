@@ -67,7 +67,7 @@ httpx_usual_exceptions = (httpx.HTTPError, httpx.TimeoutException)
 retry_lock = asyncio.Lock()
 
 
-def async_retry(*exceptions, retries=5, cooldown=0):
+def async_retry(event_loop, exceptions, retries=5, cooldown=0):
     def wrap(func):
         @wraps(func)
         async def inner(*args, **kwargs):
@@ -82,9 +82,9 @@ def async_retry(*exceptions, retries=5, cooldown=0):
                         raise err
                     else:
                         # print(f'Retry with remaining count {retries_count} before {cooldown} sec of cooldown')
-                        time_before_acquire = loop.time()
+                        time_before_acquire = event_loop.time()
                         await retry_lock.acquire()
-                        time_after_acquire = loop.time()
+                        time_after_acquire = event_loop.time()
                         await asyncio.sleep(max(cooldown - (time_after_acquire - time_before_acquire), 0))
                         retry_lock.release()
                 else:
@@ -103,8 +103,9 @@ class Limiter:
     # domain -> it's last request time
     _times = defaultdict(lambda: 0)
 
-    def __init__(self, url):
+    def __init__(self, url, event_loop):
         self._host = urlparse(url).hostname
+        self.event_loop = event_loop
 
     async def __aenter__(self):
         await self._lock.acquire()
@@ -126,13 +127,13 @@ class Limiter:
         """What time we need to wait before request to host."""
         request_time = self._times[self._host]
         request_delay = 1 / self._limits[self._host]
-        now = asyncio.get_event_loop().time()
+        now = self.event_loop.time()
         to_wait = request_time + request_delay - now
         to_wait = max(0, to_wait)
         return to_wait
 
     def _update_request_time(self):
-        now = loop.time()
+        now = self.event_loop.time()
         self._times[self._host] = now
 
 
@@ -250,10 +251,10 @@ async def build_topology_from_many(initial_host_ports: List[str]):
     await client.aclose()
 
 
-@async_retry(*httpx_usual_exceptions, retries=-1, cooldown=60)
+@async_retry(loop, httpx_usual_exceptions, retries=-1, cooldown=60)
 async def get_ip_location(ip: str):
     url = f'http://ip-api.com/json/{ip}'
-    async with Limiter(url):
+    async with Limiter(url, loop):
         r = await client.get(url)
     if r.status_code >= 400:
         r.raise_for_status()
